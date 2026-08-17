@@ -1,0 +1,19 @@
+interface @DUT_IF@
+{
+    AdvSendAdvert on;
+    MinRtrAdvInterval @RA_MIN_INTERVAL_SEC@;
+    MaxRtrAdvInterval @RA_MAX_INTERVAL_SEC@;
+    AdvManagedFlag off;
+    AdvOtherConfigFlag off;
+
+    prefix @WAN_IPV6_PREFIX@
+    {
+        AdvOnLink on;
+        AdvAutonomous on;
+    };
+
+    RDNSS @WAN_IPV6_DNS@
+    {
+        AdvRDNSSLifetime @RA_LIFETIME_SEC@;
+    };
+};

@@ -1,0 +1,42 @@
+{
+  "Dhcp6": {
+    "interfaces-config": {
+      "interfaces": [ "@DUT_IF@" ]
+    },
+    "lease-database": {
+      "type": "memfile",
+      "persist": false
+    },
+    "valid-lifetime": @DHCP_VALID_LIFETIME_SEC@,
+    "renew-timer": @DHCP_RENEW_TIMER_SEC@,
+    "rebind-timer": @DHCP_REBIND_TIMER_SEC@,
+    "preferred-lifetime": @DHCP6_PREFERRED_LIFETIME_SEC@,
+    "subnet6": [
+      {
+        "subnet": "@WAN_IPV6_PREFIX@",
+        "pools": [
+          {
+            "pool": "2001:db8:10::1000 - 2001:db8:10::1fff"
+          }
+        ],
+        "pd-pools": [
+          {
+            "prefix": "@PD_PREFIX@",
+            "prefix-len": @PD_PREFIX_LEN@,
+            "delegated-len": @PD_DELEGATED_LEN@
+          }
+        ],
+        "option-data": [
+          {
+            "name": "dns-servers",
+            "data": "@WAN_IPV6_DNS@"
+          },
+          {
+            "name": "aftr-name",
+            "data": "@AFTR_NAME@"
+          }
+        ]
+      }
+    ]
+  }
+}
