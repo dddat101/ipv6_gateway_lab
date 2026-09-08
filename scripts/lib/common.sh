@@ -123,7 +123,6 @@ load_config() {
 ensure_runtime_dirs() {
     install -d -m 0777 "${CAPTURE_DIR}" "${STATE_DIR}" "${LOG_DIR}"
     chmod 0777 "${CAPTURE_DIR}" "${STATE_DIR}" "${LOG_DIR}" 2>/dev/null || true
-    chmod -R a+rw "${CAPTURE_DIR}" "${STATE_DIR}" "${LOG_DIR}" 2>/dev/null || true
 }
 
 iface_exists_root() {
@@ -241,7 +240,7 @@ create_veth_to_ns() {
         ip -n "${ns}" route replace default via "${gatewayv4}" dev "${ns_if}" 2>/dev/null || true
     fi
     if [[ -n "${cidrv6}" ]]; then
-        ip -n "${ns}" -6 addr add "${cidrv6}" dev "${ns_if}" 2>/dev/null || true
+        ip -n "${ns}" -6 addr add "${cidrv6}" dev "${ns_if}" nodad 2>/dev/null || true
     fi
     if [[ -n "${gatewayv6}" ]]; then
         ip -n "${ns}" -6 route replace default via "${gatewayv6}" dev "${ns_if}" 2>/dev/null || true

@@ -68,6 +68,12 @@ start_radvd() {
 
     require_command radvd
     render_template "${src}" "${dst}" "${NS_IF}"
+    chmod 0644 "${dst}" 2>/dev/null || true
+
+    # Ensure IPv6 forwarding is explicitly enabled on eth0 in ns-wan for radvd
+    ip netns exec "${NS_WAN}" sysctl -q -w net.ipv6.conf.all.forwarding=1 2>/dev/null || true
+    ip netns exec "${NS_WAN}" sysctl -q -w net.ipv6.conf.default.forwarding=1 2>/dev/null || true
+    ip netns exec "${NS_WAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.forwarding=1" 2>/dev/null || true
 
     stop_pidfile "${pidfile}"
     ip netns exec "${NS_WAN}" radvd -C "${dst}" -p "${pidfile}" -m logfile -l "${LOG_DIR}/radvd.log"
