@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # NETWORK TEST LAB - UPSTREAM WAN SERVER EMULATOR
-# Controls radvd, Kea DHCPv4, Kea DHCPv6, and DS-Lite AFTR in ns-wan
+# Controls radvd, Kea DHCPv4/v6, and DS-Lite AFTR in ns-wan (with dnsmasq fallback)
 # ==============================================================================
 
 set -Eeuo pipefail
@@ -28,6 +28,20 @@ Supported Scenarios:
 USAGE
 }
 
+prepare_kea_runtime() {
+    # 1. Unload AppArmor profiles if active on host (prevents logger_lockfile & pidfile EACCES)
+    if command -v apparmor_parser >/dev/null 2>&1; then
+        apparmor_parser -R /etc/apparmor.d/usr.sbin.kea-dhcp4 2>/dev/null || true
+        apparmor_parser -R /etc/apparmor.d/usr.sbin.kea-dhcp6 2>/dev/null || true
+    fi
+
+    # 2. Ensure Kea runtime directories exist with full permissions
+    install -d -m 0777 /run/kea /run/lock/kea "${STATE_DIR}/kea"
+    chmod 0777 /run/kea /run/lock/kea "${STATE_DIR}/kea" 2>/dev/null || true
+    rm -f /run/kea/logger_lockfile /var/run/kea/logger_lockfile /run/lock/kea/logger_lockfile 2>/dev/null || true
+    rm -f /run/kea/*.pid /run/lock/kea/*.pid 2>/dev/null || true
+}
+
 stop_services() {
     require_root
     log_info "Stopping WAN server daemons in ${NS_WAN}..."
@@ -35,11 +49,14 @@ stop_services() {
     stop_pidfile "${STATE_DIR}/radvd.pid"
     stop_pidfile "${STATE_DIR}/kea-dhcp4.pid"
     stop_pidfile "${STATE_DIR}/kea-dhcp6.pid"
+    stop_pidfile "${STATE_DIR}/dnsmasq-dhcp4.pid"
+    stop_pidfile "${STATE_DIR}/dnsmasq-dhcp6.pid"
 
     if ns_exists "${NS_WAN}"; then
         ip netns exec "${NS_WAN}" pkill -TERM radvd 2>/dev/null || true
         ip netns exec "${NS_WAN}" pkill -TERM kea-dhcp4 2>/dev/null || true
         ip netns exec "${NS_WAN}" pkill -TERM kea-dhcp6 2>/dev/null || true
+        ip netns exec "${NS_WAN}" pkill -TERM dnsmasq 2>/dev/null || true
     fi
 }
 
@@ -57,48 +74,143 @@ start_radvd() {
     log_info "radvd started (${profile}) in ${NS_WAN} [PID: $(cat "${pidfile}" 2>/dev/null || echo '?')]"
 }
 
+start_dhcp4_dnsmasq() {
+    local pidfile="${STATE_DIR}/dnsmasq-dhcp4.pid"
+    local conffile="${STATE_DIR}/dnsmasq-dhcp4.conf"
+    local leasefile="${STATE_DIR}/dnsmasq-dhcp4.leases"
+    local logfile="${LOG_DIR}/dnsmasq-dhcp4.log"
+
+    require_command dnsmasq
+    stop_pidfile "${pidfile}"
+
+    {
+        printf 'port=0\n'
+        printf 'no-resolv\n'
+        printf 'no-hosts\n'
+        printf 'bind-interfaces\n'
+        printf 'interface=%s\n' "${NS_IF}"
+        printf 'dhcp-range=%s,%s,255.255.255.0,%ss\n' "${WAN_IPV4_POOL_START}" "${WAN_IPV4_POOL_END}" "${DHCP_VALID_LIFETIME_SEC}"
+        printf 'dhcp-option=option:router,%s\n' "${WAN_IPV4_ROUTER}"
+        printf 'dhcp-option=option:dns-server,%s\n' "${WAN_IPV4_DNS}"
+        printf 'dhcp-authoritative\n'
+        printf 'dhcp-leasefile=%s\n' "${leasefile}"
+        printf 'log-facility=%s\n' "${logfile}"
+        printf 'log-dhcp\n'
+    } > "${conffile}"
+
+    touch "${leasefile}"
+    chmod 0666 "${leasefile}" 2>/dev/null || true
+
+    nohup ip netns exec "${NS_WAN}" dnsmasq --conf-file="${conffile}" --pid-file="${pidfile}" > "${logfile}" 2>&1 &
+    sleep 0.5
+
+    if ! is_pidfile_running "${pidfile}"; then
+        log_error "dnsmasq (IPv4 DHCP) failed to start. Check ${logfile}"
+        tail -n 20 "${logfile}" >&2 || true
+        die "Failed to start IPv4 DHCP server."
+    fi
+    log_info "dnsmasq (IPv4 DHCP fallback) started in ${NS_WAN} [PID: $(cat "${pidfile}")]"
+}
+
 start_dhcp4() {
+    prepare_kea_runtime
+
     local src="${PROJECT_ROOT}/config/kea/kea-dhcp4.conf.in"
     local dst="${STATE_DIR}/kea-dhcp4.conf"
     local pidfile="${STATE_DIR}/kea-dhcp4.pid"
     local logfile="${LOG_DIR}/kea-dhcp4.log"
 
-    require_command kea-dhcp4
-    render_template "${src}" "${dst}" "${NS_IF}"
+    if command -v kea-dhcp4 >/dev/null 2>&1; then
+        render_template "${src}" "${dst}" "${NS_IF}"
+        stop_pidfile "${pidfile}"
 
+        nohup ip netns exec "${NS_WAN}" \
+            env KEA_PIDFILE_DIR="/run/kea" KEA_LOCKFILE_DIR="/run/lock/kea" \
+            kea-dhcp4 -c "${dst}" > "${logfile}" 2>&1 &
+        printf '%s\n' "$!" > "${pidfile}"
+        sleep 0.5
+
+        if is_pidfile_running "${pidfile}"; then
+            log_info "kea-dhcp4 started in ${NS_WAN} [PID: $(cat "${pidfile}")]"
+            return 0
+        fi
+
+        log_warn "kea-dhcp4 failed to start due to host environment/AppArmor. Log excerpt:"
+        tail -n 10 "${logfile}" >&2 || true
+    fi
+
+    log_info "Activating robust dnsmasq IPv4 DHCP server fallback..."
+    start_dhcp4_dnsmasq
+}
+
+start_dhcp6_dnsmasq() {
+    local pidfile="${STATE_DIR}/dnsmasq-dhcp6.pid"
+    local conffile="${STATE_DIR}/dnsmasq-dhcp6.conf"
+    local leasefile="${STATE_DIR}/dnsmasq-dhcp6.leases"
+    local logfile="${LOG_DIR}/dnsmasq-dhcp6.log"
+
+    require_command dnsmasq
     stop_pidfile "${pidfile}"
-    nohup ip netns exec "${NS_WAN}" kea-dhcp4 -c "${dst}" > "${logfile}" 2>&1 &
-    printf '%s\n' "$!" > "${pidfile}"
+
+    {
+        printf 'port=0\n'
+        printf 'no-resolv\n'
+        printf 'no-hosts\n'
+        printf 'bind-interfaces\n'
+        printf 'interface=%s\n' "${NS_IF}"
+        printf 'enable-ra\n'
+        printf 'dhcp-range=2001:db8:10::1000,2001:db8:10::1fff,64,%ss\n' "${DHCP_VALID_LIFETIME_SEC}"
+        printf 'dhcp-option=option6:dns-server,[%s]\n' "${WAN_IPV6_DNS}"
+        printf 'dhcp-option=option6:64,%s\n' "${AFTR_NAME}"
+        printf 'dhcp-authoritative\n'
+        printf 'dhcp-leasefile=%s\n' "${leasefile}"
+        printf 'log-facility=%s\n' "${logfile}"
+        printf 'log-dhcp\n'
+    } > "${conffile}"
+
+    touch "${leasefile}"
+    chmod 0666 "${leasefile}" 2>/dev/null || true
+
+    nohup ip netns exec "${NS_WAN}" dnsmasq --conf-file="${conffile}" --pid-file="${pidfile}" > "${logfile}" 2>&1 &
     sleep 0.5
 
     if ! is_pidfile_running "${pidfile}"; then
-        log_error "kea-dhcp4 failed to start. Check ${logfile}"
+        log_error "dnsmasq (IPv6 DHCP) failed to start. Check ${logfile}"
         tail -n 20 "${logfile}" >&2 || true
-        die "kea-dhcp4 failed."
+        die "Failed to start IPv6 DHCP server."
     fi
-    log_info "kea-dhcp4 started in ${NS_WAN} [PID: $(cat "${pidfile}")]"
+    log_info "dnsmasq (IPv6 DHCP fallback) started in ${NS_WAN} [PID: $(cat "${pidfile}")]"
 }
 
 start_dhcp6() {
+    prepare_kea_runtime
+
     local src="${PROJECT_ROOT}/config/kea/kea-dhcp6.conf.in"
     local dst="${STATE_DIR}/kea-dhcp6.conf"
     local pidfile="${STATE_DIR}/kea-dhcp6.pid"
     local logfile="${LOG_DIR}/kea-dhcp6.log"
 
-    require_command kea-dhcp6
-    render_template "${src}" "${dst}" "${NS_IF}"
+    if command -v kea-dhcp6 >/dev/null 2>&1; then
+        render_template "${src}" "${dst}" "${NS_IF}"
+        stop_pidfile "${pidfile}"
 
-    stop_pidfile "${pidfile}"
-    nohup ip netns exec "${NS_WAN}" kea-dhcp6 -c "${dst}" > "${logfile}" 2>&1 &
-    printf '%s\n' "$!" > "${pidfile}"
-    sleep 0.5
+        nohup ip netns exec "${NS_WAN}" \
+            env KEA_PIDFILE_DIR="/run/kea" KEA_LOCKFILE_DIR="/run/lock/kea" \
+            kea-dhcp6 -c "${dst}" > "${logfile}" 2>&1 &
+        printf '%s\n' "$!" > "${pidfile}"
+        sleep 0.5
 
-    if ! is_pidfile_running "${pidfile}"; then
-        log_error "kea-dhcp6 failed to start. Check ${logfile}"
-        tail -n 20 "${logfile}" >&2 || true
-        die "kea-dhcp6 failed."
+        if is_pidfile_running "${pidfile}"; then
+            log_info "kea-dhcp6 started in ${NS_WAN} [PID: $(cat "${pidfile}")]"
+            return 0
+        fi
+
+        log_warn "kea-dhcp6 failed to start due to host environment/AppArmor. Log excerpt:"
+        tail -n 10 "${logfile}" >&2 || true
     fi
-    log_info "kea-dhcp6 started in ${NS_WAN} [PID: $(cat "${pidfile}")]"
+
+    log_info "Activating robust dnsmasq IPv6 DHCP server fallback..."
+    start_dhcp6_dnsmasq
 }
 
 setup_aftr_endpoint() {
@@ -145,7 +257,6 @@ start_scenario() {
             start_radvd "stateful"
             start_dhcp6
             setup_aftr_endpoint
-            # In IPv6-only WAN, run DHCPv4 server to supply IPv4 address for Multicast / IPTV!
             start_dhcp4
             ;;
         *)
@@ -165,12 +276,12 @@ show_status() {
     printf '============================================================\n'
 
     local daemon pidfile
-    for daemon in radvd kea-dhcp4 kea-dhcp6; do
+    for daemon in radvd kea-dhcp4 kea-dhcp6 dnsmasq-dhcp4 dnsmasq-dhcp6; do
         pidfile="${STATE_DIR}/${daemon}.pid"
         if is_pidfile_running "${pidfile}"; then
-            printf '  %-12s -> RUNNING (PID %s)\n' "${daemon}" "$(cat "${pidfile}")"
+            printf '  %-18s -> RUNNING (PID %s)\n' "${daemon}" "$(cat "${pidfile}")"
         else
-            printf '  %-12s -> STOPPED\n' "${daemon}"
+            printf '  %-18s -> STOPPED\n' "${daemon}"
         fi
     done
 

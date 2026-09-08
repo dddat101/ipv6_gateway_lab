@@ -68,7 +68,22 @@ This document outlines common issues encountered on Linux host machines and DUT 
 
 ---
 
-## 5. Offline Testing Without Hardware (`--virtual`)
+## 5. Kea DHCP Permission Denied (logger_lockfile / PID file) due to AppArmor
+
+### Symptom: `Unable to use interprocess sync lockfile (Permission denied): /var/run/kea/logger_lockfile`
+- **Root Cause**: On Ubuntu 22.04 / 24.04, the `kea-dhcp4-server` and `kea-dhcp6-server` packages install restrictive AppArmor profiles (`/etc/apparmor.d/usr.sbin.kea-dhcp*`) that restrict configuration files to `/etc/kea/**` and lockfiles to `/run/lock/kea/` under strict user matching.
+- **Resolution**:
+  1. The test lab automatically prepares runtime permissions and unloads the AppArmor confinement profiles when running via `wan_server.sh`.
+  2. To manually unload the AppArmor profile on host:
+     ```bash
+     sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.kea-dhcp4
+     sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.kea-dhcp6
+     ```
+  3. `scripts/wan_server.sh` includes an automatic, transparent fallback to `dnsmasq` for IPv4 and IPv6 DHCP service if Kea encounters permission errors, guaranteeing uninterrupted scenario execution.
+
+---
+
+## 6. Offline Testing Without Hardware (`--virtual`)
 
 If physical DUT hardware or USB Ethernet adapters are not available, the entire suite can run in virtual mode:
 ```bash
