@@ -17,6 +17,7 @@
       {
         "id": 1,
         "subnet": "@WAN_IPV6_PREFIX@",
+        "rapid-commit": true,
         "pools": [
           {
             "pool": "2001:db8:10::1000 - 2001:db8:10::1fff"

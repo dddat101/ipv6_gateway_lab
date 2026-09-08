@@ -108,7 +108,7 @@ assign_static() {
     ip -n "${NS_LAN}" route replace default via "${DUT_LAN_IP}" dev "${NS_IF}" 2>/dev/null || true
 
     ip -n "${NS_LAN}" -6 addr add "${LAN_CLIENT_IPV6}/64" dev "${NS_IF}" nodad 2>/dev/null || true
-    ip -n "${NS_LAN}" -6 route replace default via "${DUT_LAN_IPV6:-2001:db8:100:1::1}" dev "${NS_IF}" 2>/dev/null || true
+    ip -n "${NS_LAN}" -6 route replace default via "${DUT_LAN_IPV6:-2001:db8:100::1}" dev "${NS_IF}" 2>/dev/null || true
 
     log_info "Static configuration applied: IPv4=${LAN_CLIENT_IPV4}, IPv6=${LAN_CLIENT_IPV6}"
 }
