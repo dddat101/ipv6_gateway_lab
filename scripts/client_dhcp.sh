@@ -159,6 +159,14 @@ show_status() {
     else
         printf '  Ping WAN Server IPv6 (%s): UNREACHABLE\n' "${WAN_IPV6_DNS}"
     fi
+
+    if [[ -n "${WAN_IPV6_DNS2:-}" && "${WAN_IPV6_DNS2}" != "${WAN_IPV6_DNS}" ]]; then
+        if ip netns exec "${NS_LAN}" ping -6 -c 1 -W 1 "${WAN_IPV6_DNS2}" >/dev/null 2>&1; then
+            printf '  Ping WAN Server Secondary IPv6 (%s): OK\n' "${WAN_IPV6_DNS2}"
+        else
+            printf '  Ping WAN Server Secondary IPv6 (%s): UNREACHABLE\n' "${WAN_IPV6_DNS2}"
+        fi
+    fi
     printf '============================================================\n'
 }
 

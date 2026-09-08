@@ -77,6 +77,15 @@ setup_virtual_dut() {
     log_info "Simulated DUT (${NS_DUT}) configured: WAN=10.10.0.50 & 2001:db8:10::50, LAN=${DUT_LAN_IP} & 2001:db8:100:1::1"
 }
 
+configure_wan_secondary_dns() {
+    if [[ -n "${WAN_IPV4_DNS2:-}" && "${WAN_IPV4_DNS2}" != "${WAN_IPV4_DNS}" ]]; then
+        ip -n "${NS_WAN}" addr add "${WAN_IPV4_DNS2}/24" dev "${NS_IF}" 2>/dev/null || true
+    fi
+    if [[ -n "${WAN_IPV6_DNS2:-}" && "${WAN_IPV6_DNS2}" != "${WAN_IPV6_DNS}" ]]; then
+        ip -n "${NS_WAN}" -6 addr add "${WAN_IPV6_DNS2}/64" dev "${NS_IF}" nodad 2>/dev/null || true
+    fi
+}
+
 main() {
     require_root
     load_config
@@ -118,6 +127,7 @@ main() {
 
         create_veth_to_ns "${NS_WAN}" "v-wan-h" "${NS_IF}" "${WAN_BRIDGE}" \
             "${WAN_IPV4_CIDR}" "" "${WAN_IPV6_CIDR}" ""
+        configure_wan_secondary_dns
 
         create_veth_to_ns "${NS_LAN}" "v-lan1-h" "${NS_IF}" "${LAN_BRIDGE}" \
             "${LAN_CLIENT_IPV4}/24" "${DUT_LAN_IP}" "${LAN_CLIENT_IPV6}/64" "2001:db8:100:1::1"
@@ -146,6 +156,7 @@ main() {
 
         create_veth_to_ns "${NS_WAN}" "v-wan-h" "${NS_IF}" "${WAN_BRIDGE}" \
             "${WAN_IPV4_CIDR}" "" "${WAN_IPV6_CIDR}" ""
+        configure_wan_secondary_dns
 
         create_veth_to_ns "${NS_LAN}" "v-lan1-h" "${NS_IF}" "${LAN_BRIDGE}" \
             "" "" "" ""
@@ -165,6 +176,7 @@ main() {
 
         create_veth_to_ns "${NS_WAN}" "v-wan-h" "${NS_IF}" "${WAN_BRIDGE}" \
             "${WAN_IPV4_CIDR}" "" "${WAN_IPV6_CIDR}" ""
+        configure_wan_secondary_dns
 
         ip netns exec "${NS_WAN}" sysctl -q -w net.ipv4.ip_forward=1 2>/dev/null || true
         ip netns exec "${NS_WAN}" sysctl -q -w net.ipv6.conf.all.forwarding=1 2>/dev/null || true

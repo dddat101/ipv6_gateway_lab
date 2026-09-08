@@ -131,7 +131,9 @@ flowchart TD
 | Network Domain | Address / Prefix | Assignment Protocol | Description |
 |---|---|---|---|
 | **WAN IPv4 Subnet** | `10.10.0.0/24` | Kea DHCPv4 Server | Assigned to DUT physical WAN port |
+| **WAN IPv4 DNS (Primary / Secondary)** | `10.10.0.1` / `10.10.0.2` | DHCPv4 Option 6 | Upstream DNS servers for IPv4 |
 | **WAN IPv6 Prefix** | `2001:db8:10::/64` | radvd (SLAAC) / Kea DHCPv6 | Global Unicast address pool for WAN |
+| **WAN IPv6 DNS (Primary / Secondary)** | `2001:db8:10::1` / `2001:db8:10::2` | DHCPv6 Option 23 / RDNSS (RFC 8106) | Upstream recursive DNS servers for IPv6 |
 | **Prefix Delegation (PD)** | `2001:db8:100::/56` | Kea DHCPv6 IA_PD (Option 25) | Delegated prefix pool carved by DUT |
 | **DS-Lite AFTR** | `2001:db8:10::affe` | DHCPv6 Option 64 (`aftr-name`) | Destination endpoint for IPv4-in-IPv6 tunnel |
 | **LAN IPv4 Subnet** | `192.168.1.0/24` | DUT DHCPv4 Server / Static | Private subnet serving downstream hosts |

@@ -102,7 +102,11 @@ start_dhcp4_dnsmasq() {
         printf 'interface=%s\n' "${NS_IF}"
         printf 'dhcp-range=%s,%s,255.255.255.0,%ss\n' "${WAN_IPV4_POOL_START}" "${WAN_IPV4_POOL_END}" "${DHCP_VALID_LIFETIME_SEC}"
         printf 'dhcp-option=option:router,%s\n' "${WAN_IPV4_ROUTER}"
-        printf 'dhcp-option=option:dns-server,%s\n' "${WAN_IPV4_DNS}"
+        if [[ -n "${WAN_IPV4_DNS2:-}" ]]; then
+            printf 'dhcp-option=option:dns-server,%s,%s\n' "${WAN_IPV4_DNS}" "${WAN_IPV4_DNS2}"
+        else
+            printf 'dhcp-option=option:dns-server,%s\n' "${WAN_IPV4_DNS}"
+        fi
         printf 'dhcp-authoritative\n'
         printf 'dhcp-leasefile=%s\n' "${leasefile}"
         printf 'log-facility=%s\n' "${logfile}"
@@ -171,7 +175,11 @@ start_dhcp6_dnsmasq() {
         printf 'interface=%s\n' "${NS_IF}"
         printf 'enable-ra\n'
         printf 'dhcp-range=2001:db8:10::1000,2001:db8:10::1fff,64,%ss\n' "${DHCP_VALID_LIFETIME_SEC}"
-        printf 'dhcp-option=option6:dns-server,[%s]\n' "${WAN_IPV6_DNS}"
+        if [[ -n "${WAN_IPV6_DNS2:-}" ]]; then
+            printf 'dhcp-option=option6:dns-server,[%s],[%s]\n' "${WAN_IPV6_DNS}" "${WAN_IPV6_DNS2}"
+        else
+            printf 'dhcp-option=option6:dns-server,[%s]\n' "${WAN_IPV6_DNS}"
+        fi
         printf 'dhcp-option=option6:64,%s\n' "${AFTR_NAME}"
         printf 'dhcp-authoritative\n'
         printf 'dhcp-leasefile=%s\n' "${leasefile}"
@@ -260,6 +268,14 @@ start_scenario() {
     ip netns exec "${NS_WAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.accept_dad=0" 2>/dev/null || true
 
     ip -n "${NS_WAN}" -6 addr replace "fe80::1/64" dev "${NS_IF}" nodad 2>/dev/null || true
+
+    # Ensure secondary DNS IPs exist on WAN interface so upstream server answers DNS/ICMP
+    if [[ -n "${WAN_IPV4_DNS2:-}" && "${WAN_IPV4_DNS2}" != "${WAN_IPV4_DNS}" ]]; then
+        ip -n "${NS_WAN}" addr add "${WAN_IPV4_DNS2}/24" dev "${NS_IF}" 2>/dev/null || true
+    fi
+    if [[ -n "${WAN_IPV6_DNS2:-}" && "${WAN_IPV6_DNS2}" != "${WAN_IPV6_DNS}" ]]; then
+        ip -n "${NS_WAN}" -6 addr add "${WAN_IPV6_DNS2}/64" dev "${NS_IF}" nodad 2>/dev/null || true
+    fi
 
     log_info "Activating WAN scenario: ${scenario}"
 

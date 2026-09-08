@@ -12,7 +12,7 @@ interface @DUT_IF@
         AdvAutonomous on;
     };
 
-    RDNSS @WAN_IPV6_DNS@
+    RDNSS @WAN_IPV6_RDNSS@
     {
         AdvRDNSSLifetime @RA_LIFETIME_SEC@;
     };

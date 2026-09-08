@@ -66,10 +66,12 @@ load_config() {
     : "${WAN_IPV4_POOL_END:=10.10.0.200}"
     : "${WAN_IPV4_ROUTER:=10.10.0.1}"
     : "${WAN_IPV4_DNS:=10.10.0.1}"
+    : "${WAN_IPV4_DNS2:=10.10.0.2}"
 
     : "${WAN_IPV6_CIDR:=2001:db8:10::1/64}"
     : "${WAN_IPV6_PREFIX:=2001:db8:10::/64}"
     : "${WAN_IPV6_DNS:=2001:db8:10::1}"
+    : "${WAN_IPV6_DNS2:=2001:db8:10::2}"
 
     : "${PD_PREFIX:=2001:db8:100::}"
     : "${PD_PREFIX_LEN:=56}"
@@ -433,15 +435,32 @@ render_template() {
     local dst="$2"
     local iface="${3:-${NS_IF}}"
 
+    local v4_dns_list="${WAN_IPV4_DNS}"
+    if [[ -n "${WAN_IPV4_DNS2:-}" ]]; then
+        v4_dns_list="${WAN_IPV4_DNS}, ${WAN_IPV4_DNS2}"
+    fi
+
+    local v6_dns_list="${WAN_IPV6_DNS}"
+    local v6_radvd_dns="${WAN_IPV6_DNS}"
+    if [[ -n "${WAN_IPV6_DNS2:-}" ]]; then
+        v6_dns_list="${WAN_IPV6_DNS}, ${WAN_IPV6_DNS2}"
+        v6_radvd_dns="${WAN_IPV6_DNS} ${WAN_IPV6_DNS2}"
+    fi
+
     sed \
         -e "s|@DUT_IF@|${iface}|g" \
         -e "s|@WAN_IPV4_SUBNET@|${WAN_IPV4_SUBNET}|g" \
         -e "s|@WAN_IPV4_POOL_START@|${WAN_IPV4_POOL_START}|g" \
         -e "s|@WAN_IPV4_POOL_END@|${WAN_IPV4_POOL_END}|g" \
         -e "s|@WAN_IPV4_ROUTER@|${WAN_IPV4_ROUTER}|g" \
-        -e "s|@WAN_IPV4_DNS@|${WAN_IPV4_DNS}|g" \
+        -e "s|@WAN_IPV4_DNS@|${v4_dns_list}|g" \
+        -e "s|@WAN_IPV4_DNS1@|${WAN_IPV4_DNS}|g" \
+        -e "s|@WAN_IPV4_DNS2@|${WAN_IPV4_DNS2:-}|g" \
         -e "s|@WAN_IPV6_PREFIX@|${WAN_IPV6_PREFIX}|g" \
-        -e "s|@WAN_IPV6_DNS@|${WAN_IPV6_DNS}|g" \
+        -e "s|@WAN_IPV6_DNS@|${v6_dns_list}|g" \
+        -e "s|@WAN_IPV6_DNS1@|${WAN_IPV6_DNS}|g" \
+        -e "s|@WAN_IPV6_DNS2@|${WAN_IPV6_DNS2:-}|g" \
+        -e "s|@WAN_IPV6_RDNSS@|${v6_radvd_dns}|g" \
         -e "s|@PD_PREFIX@|${PD_PREFIX}|g" \
         -e "s|@PD_PREFIX_LEN@|${PD_PREFIX_LEN}|g" \
         -e "s|@PD_DELEGATED_LEN@|${PD_DELEGATED_LEN}|g" \
