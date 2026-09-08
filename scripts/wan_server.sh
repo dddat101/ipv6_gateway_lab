@@ -78,9 +78,7 @@ start_radvd() {
     ip netns exec "${NS_WAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.accept_dad=0" 2>/dev/null || true
 
     # radvd strictly requires a valid link-local address on the interface (RFC 4861)
-    if ! ip netns exec "${NS_WAN}" ip -6 -o addr show dev "${NS_IF}" scope link 2>/dev/null | grep -q 'inet6 '; then
-        ip -n "${NS_WAN}" -6 addr add "fe80::1/64" dev "${NS_IF}" nodad 2>/dev/null || true
-    fi
+    ip -n "${NS_WAN}" -6 addr replace "fe80::1/64" dev "${NS_IF}" nodad 2>/dev/null || true
 
     stop_pidfile "${pidfile}"
     ip netns exec "${NS_WAN}" radvd -C "${dst}" -p "${pidfile}" -m logfile -l "${LOG_DIR}/radvd.log"
@@ -261,9 +259,7 @@ start_scenario() {
     ip netns exec "${NS_WAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.disable_ipv6=0" 2>/dev/null || true
     ip netns exec "${NS_WAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.accept_dad=0" 2>/dev/null || true
 
-    if ! ip netns exec "${NS_WAN}" ip -6 -o addr show dev "${NS_IF}" scope link 2>/dev/null | grep -q 'inet6 '; then
-        ip -n "${NS_WAN}" -6 addr add "fe80::1/64" dev "${NS_IF}" nodad 2>/dev/null || true
-    fi
+    ip -n "${NS_WAN}" -6 addr replace "fe80::1/64" dev "${NS_IF}" nodad 2>/dev/null || true
 
     log_info "Activating WAN scenario: ${scenario}"
 

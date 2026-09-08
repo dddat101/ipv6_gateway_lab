@@ -185,6 +185,8 @@ bridge_create() {
         ip link add name "${bridge}" type bridge
     fi
     ip addr flush dev "${bridge}" 2>/dev/null || true
+    # Disable host-level IPv6 stack on test bridge to prevent host SLAAC route pollution
+    sysctl -q -w "net.ipv6.conf.${bridge}.disable_ipv6=1" 2>/dev/null || true
     ip link set dev "${bridge}" type bridge stp_state 0 mcast_snooping 0 2>/dev/null || true
     ip link set dev "${bridge}" up
 }
