@@ -146,6 +146,19 @@ bridge_exists() {
     ip link show dev "${bridge}" >/dev/null 2>&1
 }
 
+validate_namespace_ready() {
+    local ns="$1"
+    local iface="$2"
+
+    if ! ns_exists "${ns}"; then
+        die "Namespace does not exist: ${ns}. Run scripts/setup.sh first."
+    fi
+    if ! iface_exists_ns "${ns}" "${iface}"; then
+        die "Interface ${iface} is missing in namespace ${ns}. Run scripts/cleanup.sh and scripts/setup.sh again."
+    fi
+}
+
+
 assert_safe_test_if() {
     local iface="$1"
 
@@ -231,7 +244,22 @@ create_veth_to_ns() {
     ip link set dev "${host_if}" master "${bridge}"
     ip link set dev "${host_if}" up
     ip -n "${ns}" link set dev "${ns_if}" up
-    ip -n "${ns}" addr flush dev "${ns_if}" 2>/dev/null || true
+
+    # Flush IPv4 and global IPv6 only - preserve link-local fe80:: (RFC 4861 requirement)
+    ip -n "${ns}" -4 addr flush dev "${ns_if}" 2>/dev/null || true
+    ip -n "${ns}" -6 addr flush dev "${ns_if}" scope global 2>/dev/null || true
+
+    # Enable IPv6 and prevent DAD delay on test interface
+    ip netns exec "${ns}" sysctl -q -w "net.ipv6.conf.${ns_if}.disable_ipv6=0" 2>/dev/null || true
+    ip netns exec "${ns}" sysctl -q -w "net.ipv6.conf.${ns_if}.addr_gen_mode=0" 2>/dev/null || true
+    ip netns exec "${ns}" sysctl -q -w "net.ipv6.conf.${ns_if}.accept_dad=0" 2>/dev/null || true
+
+    # Ensure link-local address exists immediately (required by radvd and DHCPv6)
+    if ! ip netns exec "${ns}" ip -6 -o addr show dev "${ns_if}" scope link 2>/dev/null | grep -q 'inet6 '; then
+        local host_id="1"
+        [[ "${ns}" == "${NS_LAN:-ns-lan1}" ]] && host_id="100"
+        ip -n "${ns}" -6 addr add "fe80::${host_id}/64" dev "${ns_if}" nodad 2>/dev/null || true
+    fi
 
     if [[ -n "${cidrv4}" ]]; then
         ip -n "${ns}" addr add "${cidrv4}" dev "${ns_if}"

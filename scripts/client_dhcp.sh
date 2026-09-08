@@ -55,8 +55,15 @@ request_v6() {
 
     log_info "Triggering IPv6 configuration in ${NS_LAN}..."
 
-    # Ensure accept_ra is set
+    # Ensure IPv6 and accept_ra are set
+    ip netns exec "${NS_LAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.disable_ipv6=0" 2>/dev/null || true
     ip netns exec "${NS_LAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.accept_ra=2" 2>/dev/null || true
+    ip netns exec "${NS_LAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.autoconf=1" 2>/dev/null || true
+    ip netns exec "${NS_LAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.accept_dad=0" 2>/dev/null || true
+
+    if ! ip netns exec "${NS_LAN}" ip -6 -o addr show dev "${NS_IF}" scope link 2>/dev/null | grep -q 'inet6 '; then
+        ip -n "${NS_LAN}" -6 addr add "fe80::100/64" dev "${NS_IF}" nodad 2>/dev/null || true
+    fi
 
     # Send Router Solicitation (multicast to all-routers ff02::2)
     ip netns exec "${NS_LAN}" ping -6 -c 2 -W 1 ff02::2%"${NS_IF}" >/dev/null 2>&1 || true
@@ -87,12 +94,21 @@ assign_static() {
 
     log_info "Assigning static test addresses in ${NS_LAN}..."
 
-    ip -n "${NS_LAN}" addr flush dev "${NS_IF}" 2>/dev/null || true
+    # Flush IPv4 and global IPv6 only - preserve link-local fe80::
+    ip -n "${NS_LAN}" -4 addr flush dev "${NS_IF}" 2>/dev/null || true
+    ip -n "${NS_LAN}" -6 addr flush dev "${NS_IF}" scope global 2>/dev/null || true
+
+    ip netns exec "${NS_LAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.disable_ipv6=0" 2>/dev/null || true
+    ip netns exec "${NS_LAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.accept_dad=0" 2>/dev/null || true
+    if ! ip netns exec "${NS_LAN}" ip -6 -o addr show dev "${NS_IF}" scope link 2>/dev/null | grep -q 'inet6 '; then
+        ip -n "${NS_LAN}" -6 addr add "fe80::100/64" dev "${NS_IF}" nodad 2>/dev/null || true
+    fi
+
     ip -n "${NS_LAN}" addr add "${LAN_CLIENT_IPV4}/24" dev "${NS_IF}"
     ip -n "${NS_LAN}" route replace default via "${DUT_LAN_IP}" dev "${NS_IF}" 2>/dev/null || true
 
-    ip -n "${NS_LAN}" -6 addr add "${LAN_CLIENT_IPV6}/64" dev "${NS_IF}" 2>/dev/null || true
-    ip -n "${NS_LAN}" -6 route replace default via "2001:db8:100:1::1" dev "${NS_IF}" 2>/dev/null || true
+    ip -n "${NS_LAN}" -6 addr add "${LAN_CLIENT_IPV6}/64" dev "${NS_IF}" nodad 2>/dev/null || true
+    ip -n "${NS_LAN}" -6 route replace default via "${DUT_LAN_IPV6:-2001:db8:100:1::1}" dev "${NS_IF}" 2>/dev/null || true
 
     log_info "Static configuration applied: IPv4=${LAN_CLIENT_IPV4}, IPv6=${LAN_CLIENT_IPV6}"
 }

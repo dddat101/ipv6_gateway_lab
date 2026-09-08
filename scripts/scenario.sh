@@ -70,6 +70,13 @@ main() {
     fi
 
     if [[ "${scenario}" != "ipv4-only" ]]; then
+        # Install PD return route via DUT neighbor in ns-wan if detected
+        local dut_ll
+        dut_ll="$(ip netns exec "${NS_WAN}" ip -6 neigh show dev "${NS_IF}" 2>/dev/null | awk '/fe80/ {print $1; exit}')"
+        if [[ -n "${dut_ll}" ]]; then
+            ip -n "${NS_WAN}" -6 route replace "${PD_PREFIX}/${PD_PREFIX_LEN}" via "${dut_ll}" dev "${NS_IF}" 2>/dev/null || true
+        fi
+
         if ip netns exec "${NS_LAN}" ping -6 -c "${PING_COUNT:-3}" -W "${PING_TIMEOUT_SEC:-2}" "${WAN_IPV6_DNS}" >/dev/null 2>&1; then
             log_info "LAN -> WAN IPv6 connectivity: OK"
         else

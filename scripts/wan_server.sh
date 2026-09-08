@@ -70,10 +70,17 @@ start_radvd() {
     render_template "${src}" "${dst}" "${NS_IF}"
     chmod 0644 "${dst}" 2>/dev/null || true
 
-    # Ensure IPv6 forwarding is explicitly enabled on eth0 in ns-wan for radvd
+    # Ensure IPv6 forwarding and interface readiness for radvd
     ip netns exec "${NS_WAN}" sysctl -q -w net.ipv6.conf.all.forwarding=1 2>/dev/null || true
     ip netns exec "${NS_WAN}" sysctl -q -w net.ipv6.conf.default.forwarding=1 2>/dev/null || true
     ip netns exec "${NS_WAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.forwarding=1" 2>/dev/null || true
+    ip netns exec "${NS_WAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.disable_ipv6=0" 2>/dev/null || true
+    ip netns exec "${NS_WAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.accept_dad=0" 2>/dev/null || true
+
+    # radvd strictly requires a valid link-local address on the interface (RFC 4861)
+    if ! ip netns exec "${NS_WAN}" ip -6 -o addr show dev "${NS_IF}" scope link 2>/dev/null | grep -q 'inet6 '; then
+        ip -n "${NS_WAN}" -6 addr add "fe80::1/64" dev "${NS_IF}" nodad 2>/dev/null || true
+    fi
 
     stop_pidfile "${pidfile}"
     ip netns exec "${NS_WAN}" radvd -C "${dst}" -p "${pidfile}" -m logfile -l "${LOG_DIR}/radvd.log"
@@ -196,6 +203,11 @@ start_dhcp6() {
     local pidfile="${STATE_DIR}/kea-dhcp6.pid"
     local logfile="${LOG_DIR}/kea-dhcp6.log"
 
+    # Ensure link-local address exists for DHCPv6 socket binding
+    if ! ip netns exec "${NS_WAN}" ip -6 -o addr show dev "${NS_IF}" scope link 2>/dev/null | grep -q 'inet6 '; then
+        ip -n "${NS_WAN}" -6 addr add "fe80::1/64" dev "${NS_IF}" nodad 2>/dev/null || true
+    fi
+
     if command -v kea-dhcp6 >/dev/null 2>&1; then
         render_template "${src}" "${dst}" "${NS_IF}"
         stop_pidfile "${pidfile}"
@@ -207,12 +219,17 @@ start_dhcp6() {
         sleep 0.5
 
         if is_pidfile_running "${pidfile}"; then
-            log_info "kea-dhcp6 started in ${NS_WAN} [PID: $(cat "${pidfile}")]"
-            return 0
+            sleep 0.5
+            if ! grep -q "DHCPSRV_NO_SOCKETS_OPEN" "${logfile}" 2>/dev/null; then
+                log_info "kea-dhcp6 started in ${NS_WAN} [PID: $(cat "${pidfile}")]"
+                return 0
+            fi
+            log_warn "kea-dhcp6 reported DHCPSRV_NO_SOCKETS_OPEN. Falling back to dnsmasq..."
+            stop_pidfile "${pidfile}"
+        else
+            log_warn "kea-dhcp6 failed to start due to host environment/AppArmor. Log excerpt:"
+            tail -n 10 "${logfile}" >&2 || true
         fi
-
-        log_warn "kea-dhcp6 failed to start due to host environment/AppArmor. Log excerpt:"
-        tail -n 10 "${logfile}" >&2 || true
     fi
 
     log_info "Activating robust dnsmasq IPv6 DHCP server fallback..."
@@ -236,6 +253,17 @@ start_scenario() {
     fi
 
     stop_services
+
+    # Prepare WAN interface networking
+    ip -n "${NS_WAN}" link set dev "${NS_IF}" up 2>/dev/null || true
+    ip netns exec "${NS_WAN}" sysctl -q -w "net.ipv6.conf.all.forwarding=1" 2>/dev/null || true
+    ip netns exec "${NS_WAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.forwarding=1" 2>/dev/null || true
+    ip netns exec "${NS_WAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.disable_ipv6=0" 2>/dev/null || true
+    ip netns exec "${NS_WAN}" sysctl -q -w "net.ipv6.conf.${NS_IF}.accept_dad=0" 2>/dev/null || true
+
+    if ! ip netns exec "${NS_WAN}" ip -6 -o addr show dev "${NS_IF}" scope link 2>/dev/null | grep -q 'inet6 '; then
+        ip -n "${NS_WAN}" -6 addr add "fe80::1/64" dev "${NS_IF}" nodad 2>/dev/null || true
+    fi
 
     log_info "Activating WAN scenario: ${scenario}"
 
