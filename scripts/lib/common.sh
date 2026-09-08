@@ -50,6 +50,7 @@ load_config() {
     # Defaults & Role Selection
     : "${LAB_ROLE:=single}"
     : "${TOPOLOGY_MODE:=physical}"
+    : "${RESTORE_INTERFACES_ON_CLEANUP:=1}"
     : "${WAN_BRIDGE:=br-test-wan}"
     : "${LAN_BRIDGE:=br-test-lan}"
     : "${NS_WAN:=ns-wan}"
@@ -123,6 +124,22 @@ load_config() {
 ensure_runtime_dirs() {
     install -d -m 0777 "${CAPTURE_DIR}" "${STATE_DIR}" "${LOG_DIR}"
     chmod 0777 "${CAPTURE_DIR}" "${STATE_DIR}" "${LOG_DIR}" 2>/dev/null || true
+    chmod -R a+rw "${CAPTURE_DIR}" "${LOG_DIR}" "${STATE_DIR}" 2>/dev/null || true
+}
+
+clean_logs() {
+    ensure_runtime_dirs
+    log_info "Cleaning log files in ${LOG_DIR}..."
+    find "${LOG_DIR}" -mindepth 1 ! -name '.gitkeep' -delete 2>/dev/null || true
+    log_info "Logs directory cleaned."
+}
+
+clean_captures() {
+    ensure_runtime_dirs
+    log_info "Cleaning PCAP capture files in ${CAPTURE_DIR}..."
+    find "${CAPTURE_DIR}" -mindepth 1 ! -name '.gitkeep' -delete 2>/dev/null || true
+    rm -f "${STATE_DIR}/last_capture.env" "${STATE_DIR}/latest_capture.txt" 2>/dev/null || true
+    log_info "Captures directory cleaned."
 }
 
 iface_exists_root() {
@@ -203,14 +220,85 @@ attach_physical_to_bridge() {
     ip link set dev "${iface}" up
 }
 
+restore_physical_interface() {
+    local iface="$1"
+    require_root
+
+    [[ -n "${iface}" ]] || return 0
+    iface_exists_root "${iface}" || return 0
+
+    log_info "Restoring interface ${iface} to UP state with DHCP..."
+
+    # 1. Detach from bridge master if any
+    ip link set dev "${iface}" nomaster 2>/dev/null || true
+
+    # 2. Flush any static lab IP
+    ip addr flush dev "${iface}" 2>/dev/null || true
+
+    # 3. Bring interface link UP
+    ip link set dev "${iface}" up
+
+    # 4. Hand over to NetworkManager and trigger auto-connect
+    if command -v nmcli >/dev/null 2>&1; then
+        nmcli device set "${iface}" managed yes 2>/dev/null || true
+        nmcli device set "${iface}" autoconnect yes 2>/dev/null || true
+        nmcli device connect "${iface}" >/dev/null 2>&1 || true
+    fi
+
+    # 5. Fallback DHCP if carrier is present
+    if ip link show dev "${iface}" 2>/dev/null | grep -q "LOWER_UP"; then
+        local got_ip=0
+        for (( i=0; i<4; i++ )); do
+            if ip -4 -o addr show dev "${iface}" 2>/dev/null | grep -q 'inet '; then
+                got_ip=1
+                break
+            fi
+            sleep 0.5
+        done
+
+        if (( got_ip == 0 )) && command -v dhclient >/dev/null 2>&1; then
+            log_info "Triggering dhclient for ${iface}..."
+            dhclient -4 -nw "${iface}" 2>/dev/null || true
+        fi
+    fi
+
+    local current_ip
+    current_ip="$(ip -4 -o addr show dev "${iface}" 2>/dev/null | awk '{print $4}' | head -n1 || echo '')"
+    if [[ -n "${current_ip}" ]]; then
+        log_info "Interface ${iface} is UP with IP: ${current_ip}"
+    else
+        log_info "Interface ${iface} is UP [Managed]. Waiting for DHCP lease from network."
+    fi
+}
+
+tear_down_physical_interface() {
+    local iface="$1"
+    require_root
+
+    [[ -n "${iface}" ]] || return 0
+    iface_exists_root "${iface}" || return 0
+
+    if command -v dhclient >/dev/null 2>&1; then
+        dhclient -x "${iface}" 2>/dev/null || true
+    fi
+    ip link set dev "${iface}" nomaster 2>/dev/null || true
+    ip addr flush dev "${iface}" 2>/dev/null || true
+    ip link set dev "${iface}" down 2>/dev/null || true
+    command -v nmcli >/dev/null 2>&1 && nmcli device set "${iface}" managed yes 2>/dev/null || true
+    log_info "Interface ${iface} is DOWN and flushed."
+}
+
 cleanup_bridge_and_nic() {
     local bridge="$1"
     local iface="${2:-}"
+    local restore="${3:-${RESTORE_INTERFACES_ON_CLEANUP:-1}}"
 
     if [[ -n "${iface}" ]] && iface_exists_root "${iface}"; then
-        ip link set dev "${iface}" nomaster 2>/dev/null || true
-        ip addr flush dev "${iface}" 2>/dev/null || true
-        ip link set dev "${iface}" down 2>/dev/null || true
+        if (( restore == 1 )); then
+            restore_physical_interface "${iface}"
+        else
+            tear_down_physical_interface "${iface}"
+        fi
     fi
 
     if bridge_exists "${bridge}"; then
