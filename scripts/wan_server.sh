@@ -40,10 +40,12 @@ prepare_kea_runtime() {
     chmod 0777 /run/kea /run/lock/kea "${STATE_DIR}/kea" 2>/dev/null || true
     rm -f /run/kea/logger_lockfile /var/run/kea/logger_lockfile /run/lock/kea/logger_lockfile 2>/dev/null || true
     rm -f /run/kea/*.pid /run/lock/kea/*.pid 2>/dev/null || true
+    touch /var/log/kea-dhcp6.log 2>/dev/null && chmod 0666 /var/log/kea-dhcp6.log 2>/dev/null || true
 }
 
 stop_services() {
     require_root
+    load_config
     log_info "Stopping WAN server daemons in ${NS_WAN}..."
 
     stop_pidfile "${STATE_DIR}/radvd.pid"
