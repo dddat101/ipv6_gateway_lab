@@ -141,6 +141,22 @@ flowchart TD
 
 ---
 
+## Prerequisites
+
+Install host dependencies with one command:
+
+```bash
+sudo ./scripts/install_deps.sh
+```
+
+Or manually install packages via `apt`:
+```bash
+sudo apt update
+sudo apt install -y iproute2 ethtool tshark tcpdump radvd kea-dhcp4-server kea-dhcp6-server dnsmasq udhcpc isc-dhcp-client iperf3 python3 iptables iputils-ping openssh-client
+```
+
+---
+
 ## 4. Quickstart Execution Guide
 
 ### Step 1: Prepare Environment Configuration

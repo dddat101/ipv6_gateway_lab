@@ -11,12 +11,33 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
 
+usage() {
+    cat <<'USAGE'
+Description:
+  Performs non-destructive pre-flight diagnostics of host physical test adapters,
+  default route safety, namespaces, bridges, and required CLI tools.
+
+Usage:
+  ./scripts/diagnose.sh [options]
+
+Options:
+  -h, --help    Show this help message
+
+Examples:
+  ./scripts/diagnose.sh
+
+Suggested Next Steps:
+  - If tools are missing:   sudo ./scripts/install_deps.sh
+  - Deploy topology:       sudo ./scripts/setup.sh --virtual
+USAGE
+}
+
 check_command() {
     local cmd="$1"
     if command -v "${cmd}" >/dev/null 2>&1; then
         printf '  %-16s -> OK (%s)\n' "${cmd}" "$(command -v "${cmd}")"
     else
-        printf '  %-16s -> MISSING\n' "${cmd}"
+        printf '  %-16s -> MISSING (Install via sudo ./scripts/install_deps.sh)\n' "${cmd}"
     fi
 }
 
@@ -41,6 +62,13 @@ check_interface() {
 }
 
 main() {
+    for arg in "$@"; do
+        if [[ "${arg}" == "-h" || "${arg}" == "--help" ]]; then
+            usage
+            exit 0
+        fi
+    done
+
     load_config
 
     printf '============================================================\n'
