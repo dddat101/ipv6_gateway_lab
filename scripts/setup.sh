@@ -16,15 +16,48 @@ IS_VIRTUAL=0
 
 usage() {
     cat <<'USAGE'
-Usage:
-  sudo ./scripts/setup.sh [OPTIONS]
+==================================================================
+  IPv6 Gateway Test Lab - Topology Setup
+==================================================================
 
-Options:
-  --single, -s     Setup Single-PC topology with WAN & LAN bridges (Default)
-  --wan            Setup PC1 as WAN Gateway / Server Emulator
-  --lan            Setup PC2 as LAN Client Fan-out
-  --virtual, -v    Setup 100% Virtual / Simulated DUT topology (No hardware needed)
-  -h, --help       Show this help message
+Description:
+  Initializes network topology, Linux bridges, network namespaces,
+  and interface bindings required for IPv6 gateway and Dual-Stack testing.
+
+Usage:
+  sudo ./scripts/setup.sh [options]
+  ./scripts/setup.sh -h | --help
+
+Topology Options:
+  --virtual, -v, --no-dut
+      Pure software simulation using isolated Linux network namespaces
+      (ns-wan, ns-dut, ns-lan1) and veth pairs. Zero physical hardware required.
+
+  --single, -s
+      Single-PC Dual-NIC physical topology. Connects host WAN NIC ($WAN_IF)
+      to DUT WAN, and host LAN NIC ($LAN_IF) to DUT LAN [Default].
+
+  --wan
+      Distributed 2-PC topology (Node 1): Sets up host as WAN Gateway / Server emulator.
+
+  --lan
+      Distributed 2-PC topology (Node 2): Sets up host as LAN Client endpoint.
+
+  -h, --help
+      Show this help message and exit.
+
+Examples:
+  ./scripts/setup.sh -h
+  sudo ./scripts/setup.sh --virtual
+  sudo ./scripts/setup.sh --single
+
+Suggested Next Steps:
+  1. Inspect runtime state:       ./scripts/show_state.sh
+  2. Start upstream WAN server:   sudo ./scripts/wan_server.sh start dual-stack
+  3. Execute test scenarios:      sudo ./scripts/scenario.sh dual-stack
+  4. Verify compliance & PCAP:    ./scripts/verify_capture.sh
+  5. Teardown when finished:      sudo ./scripts/cleanup.sh
+==================================================================
 USAGE
 }
 
@@ -87,6 +120,14 @@ configure_wan_secondary_dns() {
 }
 
 main() {
+    # 1. Non-root graceful degradation: Always check help first (Exit 0)
+    for arg in "$@"; do
+        if [[ "${arg}" == "-h" || "${arg}" == "--help" ]]; then
+            usage
+            exit 0
+        fi
+    done
+
     require_root
     load_config
     require_command ip
@@ -114,7 +155,8 @@ main() {
         mode_desc="VIRTUAL"
     fi
 
-    log_info "Starting topology setup (Role: ${role}, Mode: ${mode_desc})..."
+    print_header "INITIALIZING TOPOLOGY: [${mode_desc}] [ROLE: ${role^^}]"
+    ensure_runtime_dirs
 
     # 1. Activate auto-rollback trap
     SETUP_ACTIVE=1
@@ -209,7 +251,22 @@ TOPO_EOF
     # 4. Disable rollback trap on success
     SETUP_ACTIVE=0
     trap - ERR
-    log_info "Setup completed successfully (Role: ${role}, Virtual: ${IS_VIRTUAL})."
+    log_success "Topology setup completed successfully (Role: ${role}, Mode: ${mode_desc})!"
+
+    if [[ -x "${SCRIPT_DIR}/show_state.sh" ]]; then
+        bash "${SCRIPT_DIR}/show_state.sh" || true
+    fi
+
+    printf '\n'
+    print_header "SUGGESTED NEXT STEPS"
+    cat <<'NEXT_STEP'
+  1. Inspect runtime state:       ./scripts/show_state.sh
+  2. Start upstream WAN server:   sudo ./scripts/wan_server.sh start dual-stack
+  3. Execute test scenarios:      sudo ./scripts/scenario.sh dual-stack
+  4. Verify compliance & PCAP:    ./scripts/verify_capture.sh
+  5. Teardown when finished:      sudo ./scripts/cleanup.sh
+==================================================================
+NEXT_STEP
 }
 
 main "$@"

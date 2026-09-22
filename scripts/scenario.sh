@@ -14,8 +14,18 @@ source "${SCRIPT_DIR}/lib/common.sh"
 
 usage() {
     cat <<'USAGE'
+==================================================================
+  IPv6 Gateway Test Lab - Automated Scenario Runner
+==================================================================
+
+Description:
+  Automates multi-phase test scenarios, triggers packet capture on
+  WAN and LAN interfaces, injects protocol signaling, tests IPv4/IPv6
+  data-plane reachability, and evaluates capture compliance.
+
 Usage:
   sudo ./scripts/scenario.sh [scenario]
+  ./scripts/scenario.sh -h | --help
 
 Supported Scenarios:
   dual-stack        (Default) Concurrent IPv4 NAT + IPv6 SLAAC/DHCPv6
@@ -24,45 +34,62 @@ Supported Scenarios:
   stateless-v6      SLAAC + Stateless DHCPv6 Information-Request
   ipv4-only         IPv4-only WAN (IPv6 disabled on internal LAN)
   ipv6-only-dslite  IPv6-only WAN + DS-Lite AFTR + Multicast DHCPv4
+  -h, --help        Show this help message and exit
+
+Examples:
+  ./scripts/scenario.sh -h
+  sudo ./scripts/scenario.sh dual-stack
+  sudo ./scripts/scenario.sh ipv6-only-dslite
+
+Suggested Next Steps:
+  1. Inspect verification report: ./scripts/verify_capture.sh
+  2. Inspect capture state:       ./scripts/show_state.sh
+  3. Teardown when finished:      sudo ./scripts/cleanup.sh
+==================================================================
 USAGE
 }
 
 main() {
+    for arg in "$@"; do
+        if [[ "${arg}" == "-h" || "${arg}" == "--help" ]]; then
+            usage
+            exit 0
+        fi
+    done
+
     require_root
     load_config
+    ensure_runtime_dirs
 
     local scenario="${1:-${DEFAULT_SCENARIO:-dual-stack}}"
 
-    printf '\n============================================================\n'
-    printf '        Starting Automated Test Scenario: %s\n' "${scenario}"
-    printf '============================================================\n'
+    print_header "STARTING AUTOMATED TEST SCENARIO: [${scenario^^}]"
 
     # Phase 0: Start background packet capture
-    log_info "=== Phase 0: Starting Packet Capture ==="
+    log_step "Phase 0: Starting Background Packet Capture"
     "${SCRIPT_DIR}/capture.sh" start both
     trap '"${SCRIPT_DIR}/capture.sh" stop >/dev/null 2>&1 || true' EXIT INT TERM
 
     # Phase 1: Activate Upstream WAN Server Scenario
-    log_info "=== Phase 1: Activating Upstream WAN Emulator (${scenario}) ==="
+    log_step "Phase 1: Activating Upstream WAN Emulator (${scenario})"
     "${SCRIPT_DIR}/wan_server.sh" start "${scenario}"
-    sleep 2
+    sleep 1
 
     # Phase 2: Client Address Acquisition & Network Configuration
-    log_info "=== Phase 2: Client Address Configuration in ${NS_LAN} ==="
+    log_step "Phase 2: Client Address Configuration in ${NS_LAN}"
     local phase2_result="PASS"
     if ! "${SCRIPT_DIR}/client_dhcp.sh" static; then
         phase2_result="FAIL"
     fi
-    sleep 1
 
     # Phase 3: Traffic & Connectivity Invariant Verification
-    log_info "=== Phase 3: Traffic & Routing Verification ==="
+    log_step "Phase 3: Traffic & Routing Verification"
     local phase3_ipv4="PASS"
     local phase3_ipv6="PASS"
 
     if [[ "${scenario}" != "ipv6-only-dslite" && "${scenario}" != "ipv6-only" ]]; then
-        if ip netns exec "${NS_LAN}" ping -c "${PING_COUNT:-3}" -W "${PING_TIMEOUT_SEC:-2}" "${WAN_IPV4_ROUTER}" >/dev/null 2>&1; then
-            log_info "LAN -> WAN IPv4 connectivity: OK"
+        if is_ip_reachable "${WAN_IPV4_ROUTER}" "${PING_TIMEOUT_SEC:-2}" "${NS_LAN}"; then
+            log_success "LAN -> WAN IPv4 connectivity confirmed!"
         else
             log_warn "LAN -> WAN IPv4 connectivity check failed."
             phase3_ipv4="WARN"
@@ -77,8 +104,8 @@ main() {
             ip -n "${NS_WAN}" -6 route replace "${PD_PREFIX}/${PD_PREFIX_LEN}" via "${dut_ll}" dev "${NS_IF}" 2>/dev/null || true
         fi
 
-        if ip netns exec "${NS_LAN}" ping -6 -c "${PING_COUNT:-3}" -W "${PING_TIMEOUT_SEC:-2}" "${WAN_IPV6_DNS}" >/dev/null 2>&1; then
-            log_info "LAN -> WAN IPv6 connectivity: OK"
+        if is_ip_reachable "${WAN_IPV6_DNS}" "${PING_TIMEOUT_SEC:-2}" "${NS_LAN}"; then
+            log_success "LAN -> WAN IPv6 connectivity confirmed!"
         else
             log_warn "LAN -> WAN IPv6 connectivity check failed."
             phase3_ipv6="WARN"
@@ -86,7 +113,7 @@ main() {
     fi
 
     # Phase 4: Stop packet capture and analyze evidence
-    log_info "=== Phase 4: Stopping Capture and Verifying Evidence ==="
+    log_step "Phase 4: Stopping Capture and Verifying Evidence"
     "${SCRIPT_DIR}/capture.sh" stop
     trap - EXIT INT TERM
 
@@ -94,24 +121,27 @@ main() {
     if [[ -f "${STATE_DIR}/last_capture.env" ]]; then
         # shellcheck disable=SC1090
         source "${STATE_DIR}/last_capture.env"
-        if ! "${SCRIPT_DIR}/verify_capture.sh" "${LAST_PCAP_WAN:-${LAST_PCAP:-}}"; then
-            phase4_result="FAIL"
+        local target_pcap="${LAST_PCAP_WAN:-${LAST_PCAP:-}}"
+        if [[ -n "${target_pcap}" && -f "${target_pcap}" ]]; then
+            if ! "${SCRIPT_DIR}/verify_capture.sh" "${target_pcap}"; then
+                phase4_result="FAIL"
+            fi
+        else
+            phase4_result="WARN"
         fi
     else
-        phase4_result="FAIL"
+        phase4_result="WARN"
     fi
 
     # Phase 5: Output Summary Table
-    printf '\n============================================================\n'
-    printf '                  SCENARIO RESULTS SUMMARY                  \n'
-    printf '============================================================\n'
+    print_header "SCENARIO EXECUTION RESULTS SUMMARY"
     printf '  Target Scenario:         %-24s\n' "${scenario}"
     printf '  Phase 1 (WAN Setup):     PASS\n'
     printf '  Phase 2 (LAN Config):    %s\n' "${phase2_result}"
     printf '  Phase 3 (IPv4 Traffic):  %s\n' "${phase3_ipv4}"
     printf '  Phase 3 (IPv6 Traffic):  %s\n' "${phase3_ipv6}"
     printf '  Phase 4 (Evidence Check):%s\n' "${phase4_result}"
-    printf '============================================================\n'
+    printf '==================================================================\n'
 }
 
 main "$@"

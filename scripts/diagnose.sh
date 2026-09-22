@@ -13,31 +13,41 @@ source "${SCRIPT_DIR}/lib/common.sh"
 
 usage() {
     cat <<'USAGE'
+==================================================================
+  IPv6 Gateway Test Lab - Pre-Flight Diagnostics
+==================================================================
+
 Description:
-  Performs non-destructive pre-flight diagnostics of host physical test adapters,
-  default route safety, namespaces, bridges, and required CLI tools.
+  Performs non-destructive pre-flight diagnostics of host physical
+  test adapters, default route safety, network namespaces, bridges,
+  and required toolchain binaries.
 
 Usage:
   ./scripts/diagnose.sh [options]
+  ./scripts/diagnose.sh -h | --help
 
 Options:
-  -h, --help    Show this help message
+  -h, --help    Show this help message and exit
 
 Examples:
   ./scripts/diagnose.sh
 
 Suggested Next Steps:
   - If tools are missing:   sudo ./scripts/install_deps.sh
-  - Deploy topology:       sudo ./scripts/setup.sh --virtual
+  - Deploy virtual lab:     sudo ./scripts/setup.sh --virtual
+  - Deploy physical lab:    sudo ./scripts/setup.sh --single
+==================================================================
 USAGE
 }
 
-check_command() {
-    local cmd="$1"
-    if command -v "${cmd}" >/dev/null 2>&1; then
-        printf '  %-16s -> OK (%s)\n' "${cmd}" "$(command -v "${cmd}")"
+check_item() {
+    local label="$1" status="$2" note="${3:-}"
+    if [[ "${status}" == "PASS" ]]; then
+        printf '  \e[1;32m[PASS]\e[0m %-28s %s\n' "${label}" "${note}"
+    elif [[ "${status}" == "WARN" ]]; then
+        printf '  \e[1;33m[WARN]\e[0m %-28s %s\n' "${label}" "${note}"
     else
-        printf '  %-16s -> MISSING (Install via sudo ./scripts/install_deps.sh)\n' "${cmd}"
+        printf '  \e[1;31m[FAIL]\e[0m %-28s %s\n' "${label}" "${note}"
     fi
 }
 
@@ -46,18 +56,17 @@ check_interface() {
     local desc="$2"
 
     if [[ -z "${iface}" ]]; then
-        printf '  %-16s -> NOT CONFIGURED (%s)\n' "${desc}" "<empty>"
+        check_item "${desc}" "WARN" "<not configured in config.env>"
         return
     fi
 
     if ip link show dev "${iface}" >/dev/null 2>&1; then
-        local state
+        local state ip_addr
         state="$(ip -br link show dev "${iface}" 2>/dev/null | awk '{print $2}')"
-        local ip_addr
         ip_addr="$(ip -4 -br addr show dev "${iface}" 2>/dev/null | awk '{print $3}' || echo '')"
-        printf '  %-16s -> FOUND: %s [%s] %s\n' "${desc}" "${iface}" "${state}" "${ip_addr}"
+        check_item "${desc} (${iface})" "PASS" "[${state}] ${ip_addr}"
     else
-        printf '  %-16s -> NOT FOUND: %s\n' "${desc}" "${iface}"
+        check_item "${desc} (${iface})" "WARN" "Physical NIC not found / unplugged"
     fi
 }
 
@@ -70,52 +79,72 @@ main() {
     done
 
     load_config
+    print_header "IPV6 GATEWAY LAB PRE-FLIGHT DIAGNOSTICS"
 
-    printf '============================================================\n'
-    printf '        IPv6 Gateway Lab Pre-Flight Diagnostics            \n'
-    printf '============================================================\n'
-
-    printf '\n== Host Default Route Safety ==\n'
-    local def_route
+    # 1. Host Network Safety
+    print_section "HOST NETWORK SAFETY"
+    local def_route default_if
     def_route="$(ip route show default 2>/dev/null || true)"
-    if [[ -n "${def_route}" ]]; then
-        printf '  Default Route: %s\n' "${def_route}"
+    default_if="$(awk '/dev/ {print $5}' <<< "${def_route}" | head -n1 || echo "")"
+
+    if [[ -n "${default_if}" ]]; then
+        check_item "Host Default Route" "PASS" "Interface: ${default_if}"
     else
-        printf '  Default Route: <none detected>\n'
+        check_item "Host Default Route" "WARN" "No default route detected on host"
     fi
 
-    printf '\n== Target Physical Interfaces ==\n'
+    local iface
+    for iface in "${WAN_IF:-}" "${LAN_IF:-}"; do
+        if [[ -n "${iface}" && "${iface}" == "${default_if}" ]]; then
+            check_item "Safety check: ${iface}" "FAIL" "DANGER: Test NIC carries host default route!"
+        elif [[ -n "${iface}" ]]; then
+            check_item "Safety check: ${iface}" "PASS" "Isolated from host default route"
+        fi
+    done
+
+    # 2. Target Physical Interfaces
+    print_section "TARGET PHYSICAL INTERFACES"
     check_interface "${WAN_IF:-}" "WAN Interface"
     check_interface "${LAN_IF:-}" "LAN Interface"
     if [[ -n "${DUT_IF:-}" && "${DUT_IF}" != "${WAN_IF:-}" && "${DUT_IF}" != "${LAN_IF:-}" ]]; then
         check_interface "${DUT_IF}" "2-PC Test NIC"
     fi
 
-    printf '\n== Existing Network Namespaces ==\n'
-    local ns_list
-    ns_list="$(ip netns list 2>/dev/null || true)"
-    if [[ -n "${ns_list}" ]]; then
-        printf '%s\n' "${ns_list}"
-    else
-        printf '  <none>\n'
+    # 3. Kernel Capabilities
+    print_section "KERNEL CAPABILITIES"
+    if [[ -d /sys/class/net ]]; then
+        check_item "Linux Network Stack" "PASS" "sysfs net available"
+    fi
+    if [[ -f /proc/sys/net/ipv4/ip_forward ]]; then
+        check_item "Host IPv4 Forwarding" "PASS" "State: $(cat /proc/sys/net/ipv4/ip_forward)"
+    fi
+    if [[ -f /proc/sys/net/ipv6/conf/all/forwarding ]]; then
+        check_item "Host IPv6 Forwarding" "PASS" "State: $(cat /proc/sys/net/ipv6/conf/all/forwarding)"
     fi
 
-    printf '\n== Linux Bridges ==\n'
-    local br_list
-    br_list="$(ip -br link show type bridge 2>/dev/null || true)"
-    if [[ -n "${br_list}" ]]; then
-        printf '%s\n' "${br_list}"
-    else
-        printf '  <none>\n'
-    fi
-
-    printf '\n== Required CLI Tools ==\n'
+    # 4. Required CLI Tools
+    print_section "REQUIRED CLI TOOLCHAIN"
     local tool
     for tool in ip bridge tcpdump tshark python3 radvd kea-dhcp4 kea-dhcp6 dnsmasq udhcpc dhclient iperf3; do
-        check_command "${tool}"
+        if check_command "${tool}"; then
+            check_item "Tool: ${tool}" "PASS" "$(command -v "${tool}")"
+        else
+            check_item "Tool: ${tool}" "WARN" "Missing (Install via sudo ./scripts/install_deps.sh)"
+        fi
     done
 
-    printf '\n============================================================\n'
+    # 5. Runtime Directories
+    print_section "RUNTIME DIRECTORIES"
+    local dir
+    for dir in "${CAPTURE_DIR}" "${LOG_DIR}" "${STATE_DIR}"; do
+        if [[ -d "${dir}" ]]; then
+            check_item "Directory: $(basename "${dir}")" "PASS" "${dir}"
+        else
+            check_item "Directory: $(basename "${dir}")" "WARN" "Will be created automatically"
+        fi
+    done
+
+    printf '==================================================================\n'
     printf 'Diagnostics completed.\n'
 }
 

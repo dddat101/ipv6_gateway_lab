@@ -14,11 +14,19 @@ source "${SCRIPT_DIR}/lib/common.sh"
 
 usage() {
     cat <<'USAGE'
+==================================================================
+  IPv6 Gateway Test Lab - Cleanup & Teardown
+==================================================================
+
+Description:
+  Gracefully stops daemons, tears down network namespaces, bridges,
+  and virtual interfaces, and restores physical network adapters.
+  Supports selective, non-destructive cleaning of logs and captures.
+
 Usage:
   sudo ./scripts/cleanup.sh [options]
-  ./scripts/cleanup.sh logs
-  ./scripts/cleanup.sh captures
-  ./scripts/cleanup.sh data
+  ./scripts/cleanup.sh [command]
+  ./scripts/cleanup.sh -h | --help
 
 Options:
   -r, --restore, --dhcp    Restore physical interfaces (WAN_IF, LAN_IF) to UP, re-enable NetworkManager,
@@ -27,12 +35,26 @@ Options:
   --logs                   Purge all test logs in logs/
   --captures               Purge all PCAP captures in captures/
   -a, --all                Teardown topology and purge state, logs, and captures
-  -h, --help               Show this help message
+  -h, --help               Show this help message and exit
 
 Subcommands (Non-destructive to running topology):
   logs                     Purge logs/ without tearing down lab
   captures                 Purge captures/ without tearing down lab
   data                     Purge both logs/ and captures/ without tearing down lab
+
+Examples:
+  ./scripts/cleanup.sh -h
+  sudo ./scripts/cleanup.sh
+  sudo ./scripts/cleanup.sh --all
+  sudo ./scripts/cleanup.sh --down
+  ./scripts/cleanup.sh logs
+  ./scripts/cleanup.sh captures
+
+Suggested Next Steps:
+  - Verify clean state:    ./scripts/show_state.sh
+  - Deploy virtual lab:    sudo ./scripts/setup.sh --virtual
+  - Deploy physical lab:   sudo ./scripts/setup.sh --single
+==================================================================
 USAGE
 }
 
@@ -47,7 +69,7 @@ main() {
 
     load_config
 
-    # Non-destructive subcommands
+    # Non-destructive subcommands (Run without requiring root)
     case "${1:-}" in
         logs)
             clean_logs
@@ -82,7 +104,8 @@ main() {
         esac
     done
 
-    log_info "Initiating cleanup of IPv6 Gateway Lab (restore_interfaces=${restore})..."
+    print_header "CLEANING UP IPV6 GATEWAY LAB"
+    log_info "Initiating cleanup (restore_interfaces=${restore})..."
 
     # 1. Stop capture and client processes
     if [[ -x "${SCRIPT_DIR}/capture.sh" ]]; then
@@ -175,7 +198,12 @@ main() {
         clean_captures
     fi
 
-    log_info "Cleanup completed successfully. All test resources released."
+    log_success "Cleanup completed successfully! All test resources released."
+
+    printf '\nSuggested next steps:\n'
+    printf '  - Check lab state:     ./scripts/show_state.sh\n'
+    printf '  - Deploy virtual lab:  sudo ./scripts/setup.sh --virtual\n'
+    printf '  - Deploy physical lab: sudo ./scripts/setup.sh --single\n'
 }
 
 main "$@"

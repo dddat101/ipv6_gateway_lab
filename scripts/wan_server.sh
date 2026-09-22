@@ -13,18 +13,45 @@ source "${SCRIPT_DIR}/lib/common.sh"
 
 usage() {
     cat <<'USAGE'
+==================================================================
+  IPv6 Gateway Test Lab - Upstream WAN Server Emulator
+==================================================================
+
+Description:
+  Controls upstream mock WAN servers (radvd, Kea DHCPv4/v6, dnsmasq,
+  and AFTR DS-Lite endpoint) inside the ns-wan network namespace.
+
 Usage:
   sudo ./scripts/wan_server.sh start [scenario]
   sudo ./scripts/wan_server.sh stop
   ./scripts/wan_server.sh status
+  ./scripts/wan_server.sh -h | --help
+
+Commands:
+  start [scenario]  Activate specific WAN server profile [Default: dual-stack]
+  stop              Stop all running WAN daemons
+  status            Inspect status of WAN emulator daemons
 
 Supported Scenarios:
-  dual-stack        IPv4 DHCP + IPv6 Stateful DHCPv6 + PD + SLAAC (Default)
+  dual-stack        IPv4 DHCP + IPv6 Stateful DHCPv6 + IA_PD + SLAAC (Default)
   slaac             Stateless SLAAC + RDNSS (RFC 8106)
   stateful-v6       Stateful DHCPv6 (IA_NA + IA_PD) with M=1, O=1
   stateless-v6      SLAAC + Stateless DHCPv6 Information-Request (M=0, O=1)
   ipv4-only         IPv4-only WAN (IPv6 disabled on internal LAN)
   ipv6-only-dslite  IPv6-only WAN + DS-Lite AFTR + Multicast DHCPv4
+  -h, --help        Show this help message and exit
+
+Examples:
+  ./scripts/wan_server.sh -h
+  sudo ./scripts/wan_server.sh start dual-stack
+  sudo ./scripts/wan_server.sh start ipv6-only-dslite
+  ./scripts/wan_server.sh status
+  sudo ./scripts/wan_server.sh stop
+
+Suggested Next Steps:
+  - Run scenario:          sudo ./scripts/scenario.sh dual-stack
+  - Inspect lab state:     ./scripts/show_state.sh
+==================================================================
 USAGE
 }
 
@@ -342,11 +369,19 @@ show_status() {
 }
 
 main() {
+    for arg in "$@"; do
+        if [[ "${arg}" == "-h" || "${arg}" == "--help" ]]; then
+            usage
+            exit 0
+        fi
+    done
+
     case "${1:-}" in
-        start)  shift; start_scenario "${1:-}" ;;
-        stop)   stop_services ;;
-        status) show_status ;;
-        *)      usage; exit 2 ;;
+        start)     shift; start_scenario "${1:-}" ;;
+        stop)      stop_services ;;
+        status)    show_status ;;
+        -h|--help) usage; exit 0 ;;
+        *)         usage; exit 2 ;;
     esac
 }
 

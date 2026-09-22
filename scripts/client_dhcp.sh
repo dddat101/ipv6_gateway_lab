@@ -13,15 +13,40 @@ source "${SCRIPT_DIR}/lib/common.sh"
 
 usage() {
     cat <<'USAGE'
+==================================================================
+  IPv6 Gateway Test Lab - LAN Client IP Management
+==================================================================
+
+Description:
+  Manages IPv4 (udhcpc Option 12 Hostname & Option 60 Vendor Class)
+  and IPv6 (SLAAC / DHCPv6 client) address acquisition or static assignment
+  inside the ns-lan1 network namespace.
+
 Usage:
-  sudo ./scripts/client_dhcp.sh [request-v4 | request-v6 | static | release | status]
+  sudo ./scripts/client_dhcp.sh [command]
+  ./scripts/client_dhcp.sh status
+  ./scripts/client_dhcp.sh -h | --help
 
 Commands:
-  request-v4     Obtain IPv4 address from DUT via udhcpc (Option 12 Hostname & Option 60)
+  request-v4     Obtain IPv4 address from DUT via udhcpc (Option 12/60)
   request-v6     Trigger IPv6 configuration (SLAAC / DHCPv6 client)
   static         Assign fast deterministic static IPv4 & IPv6 test addresses
   release        Release all leases and flush IP addresses on client interface
   status         Show current LAN client IP, routes, and ping DUT gateway
+  -h, --help     Show this help message and exit
+
+Examples:
+  ./scripts/client_dhcp.sh -h
+  sudo ./scripts/client_dhcp.sh static
+  sudo ./scripts/client_dhcp.sh request-v4
+  sudo ./scripts/client_dhcp.sh request-v6
+  ./scripts/client_dhcp.sh status
+  sudo ./scripts/client_dhcp.sh release
+
+Suggested Next Steps:
+  - Run traffic tests:     sudo ./scripts/scenario.sh dual-stack
+  - Inspect lab state:     ./scripts/show_state.sh
+==================================================================
 USAGE
 }
 
@@ -171,12 +196,20 @@ show_status() {
 }
 
 main() {
-    case "${1:-}" in
+    for arg in "$@"; do
+        if [[ "${arg}" == "-h" || "${arg}" == "--help" ]]; then
+            usage
+            exit 0
+        fi
+    done
+
+    case "${1:-status}" in
         request-v4) request_v4 ;;
         request-v6) request_v6 ;;
         static)     assign_static ;;
         release)    release_all ;;
         status)     show_status ;;
+        -h|--help)  usage; exit 0 ;;
         *)          usage; exit 2 ;;
     esac
 }

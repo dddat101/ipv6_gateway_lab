@@ -11,9 +11,48 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/common.sh
 source "${SCRIPT_DIR}/lib/common.sh"
 
+usage() {
+    cat <<'USAGE'
+==================================================================
+  IPv6 Gateway Test Lab - DUT State & Telemetry Collector
+==================================================================
+
+Description:
+  Connects to DUT via SSH to collect operational telemetry: system time,
+  uptime, network interface addresses, routing tables (v4 and v6),
+  NDP neighbors, hardware acceleration (flow-cache/fcctl), softirqs,
+  and connection tracking counters.
+
+Usage:
+  ./scripts/dut_collector.sh [options]
+  ./scripts/dut_collector.sh -h | --help
+
+Options:
+  -h, --help  Show this help message and exit
+
+Examples:
+  ./scripts/dut_collector.sh
+
+Suggested Next Steps:
+  - Inspect output logs:   cat state/dut_evidence_*.log
+  - Verify PCAP evidence:  ./scripts/verify_capture.sh
+==================================================================
+USAGE
+}
+
 main() {
+    for arg in "$@"; do
+        if [[ "${arg}" == "-h" || "${arg}" == "--help" ]]; then
+            usage
+            exit 0
+        fi
+    done
+
     load_config
-    require_command ssh
+
+    if ! check_command ssh; then
+        die "ssh command is not installed. Install via: sudo ./scripts/install_deps.sh"
+    fi
 
     if [[ -z "${DUT_SSH_HOST:-}" ]]; then
         log_warn "DUT_SSH_HOST is not configured in config.env. Skipping remote collection."
@@ -24,10 +63,14 @@ main() {
     timestamp="$(date +%Y%m%d_%H%M%S)"
     output_file="${STATE_DIR}/dut_evidence_${timestamp}.log"
 
-    log_info "Collecting DUT diagnostic state from ${DUT_SSH_USER}@${DUT_SSH_HOST}..."
+    print_header "COLLECTING DUT TELEMETRY"
+    log_info "Connecting to ${DUT_SSH_USER:-root}@${DUT_SSH_HOST}..."
 
-    # shellcheck disable=SC2086
-    ssh ${DUT_SSH_OPTS:-} "${DUT_SSH_USER}@${DUT_SSH_HOST}" 'bash -s' << 'REMOTE_EOF' > "${output_file}" 2>&1 || true
+    local ssh_opts=(-o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o LogLevel=ERROR)
+    [[ -n "${DUT_SSH_PORT:-}" ]] && ssh_opts+=(-p "${DUT_SSH_PORT}")
+    [[ -n "${DUT_SSH_KEY:-}" && -f "${DUT_SSH_KEY}" ]] && ssh_opts+=(-i "${DUT_SSH_KEY}")
+
+    ssh "${ssh_opts[@]}" "${DUT_SSH_USER:-root}@${DUT_SSH_HOST}" 'bash -s' << 'REMOTE_EOF' > "${output_file}" 2>&1 || true
         echo "=== DUT System Time ==="
         date
 
@@ -62,7 +105,7 @@ main() {
         cat /proc/sys/net/netfilter/nf_conntrack_count 2>/dev/null || cat /proc/net/ip_conntrack 2>/dev/null | wc -l || true
 REMOTE_EOF
 
-    log_info "DUT evidence saved to: ${output_file}"
+    log_success "DUT evidence saved to: ${output_file}"
 }
 
 main "$@"
